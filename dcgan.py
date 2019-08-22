@@ -14,16 +14,15 @@ import torchvision.utils as vutils
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--ngpu', type=int, default=1, help='number of GPUs to use')
-parser.add_argument('--outf', default='.', help='folder to output images and model checkpoints')
-parser.add_argument('--classes', default='bedroom', help='comma separated list of classes for the lsun data set')
+parser.add_argument('--ngpu', type=int, default=0, help='number of GPUs to use')
 opt = parser.parse_args()
 
+# 学習後のネットワークを保存するフォルダ作成
 try:
     os.makedirs('./models')
 except OSError:
     pass
-
+# 生成画像を保存するフォルダ作成
 try:
     os.makedirs('./generated_images')
 except OSError:
@@ -48,18 +47,12 @@ dataset = dset.MNIST(root='./', download=True,
                         transforms.Resize(64),
                         transforms.ToTensor(),
                         transforms.Normalize((0.5,), (0.5,)),]))
+# 入力画像のチャネル数
 nc=1
+# バッチサイズ
 batchsize = 64
+# Dataloader
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchsize, shuffle=True, num_workers=2)
-
-# # custom weights initialization called on netG and netD
-# def weights_init(m):
-#     classname = m.__class__.__name__
-#     if classname.find('Conv') != -1:
-#         m.weight.data.normal_(0.0, 0.02)
-#     elif classname.find('BatchNorm') != -1:
-#         m.weight.data.normal_(1.0, 0.02)
-#         m.bias.data.fill_(0)
 
 # 画像を生成するネットワークG
 class Generator(nn.Module):
@@ -69,26 +62,26 @@ class Generator(nn.Module):
         self.nz = nz
         self.nf = 64
         self.main = nn.Sequential(
-            # input is Z, going into a convolution
+            # ランダムノイズをDeconvolution layerに入力
             nn.ConvTranspose2d(self.nz, self.nf * 8, 4, 1, 0, bias=False),
             nn.BatchNorm2d(self.nf * 8),
             nn.ReLU(),
-            # state size. (nf*8) x 4 x 4
+            # (nf*8) x 4 x 4
             nn.ConvTranspose2d(self.nf * 8, self.nf * 4, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.nf * 4),
             nn.ReLU(),
-            # state size. (nf*4) x 8 x 8
+            # (nf*4) x 8 x 8
             nn.ConvTranspose2d(self.nf * 4, self.nf * 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.nf * 2),
             nn.ReLU(),
-            # state size. (nf*2) x 16 x 16
+            # (nf*2) x 16 x 16
             nn.ConvTranspose2d(self.nf * 2, self.nf, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.nf),
             nn.ReLU(),
-            # state size. (nf) x 32 x 32
+            # (nf) x 32 x 32
             nn.ConvTranspose2d(self.nf, nc, 4, 2, 1, bias=False),
             nn.Tanh()
-            # state size. (nc) x 64 x 64
+            # (nc) x 64 x 64の画像を出力
         )
 
     def forward(self, input):
@@ -105,22 +98,22 @@ class Discriminator(nn.Module):
         self.ngpu = ngpu
         self.nf = 64
         self.main = nn.Sequential(
-            # input is (nc) x 64 x 64
+            # input size is (nc) x 64 x 64
             nn.Conv2d(nc, self.nf, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
-            # state size. (nf) x 32 x 32
+            # (nf) x 32 x 32
             nn.Conv2d(self.nf, self.nf * 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.nf * 2),
             nn.LeakyReLU(0.2, inplace=True),
-            # state size. (nf*2) x 16 x 16
+            # (nf*2) x 16 x 16
             nn.Conv2d(self.nf * 2, self.nf * 4, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.nf * 4),
             nn.LeakyReLU(0.2, inplace=True),
-            # state size. (nf*4) x 8 x 8
+            # (nf*4) x 8 x 8
             nn.Conv2d(self.nf * 4, self.nf * 8, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.nf * 8),
             nn.LeakyReLU(0.2, inplace=True),
-            # state size. (nf*8) x 4 x 4
+            # (nf*8) x 4 x 4
             nn.Conv2d(self.nf * 8, 1, 4, 1, 0, bias=False),
             nn.Sigmoid()
         )
@@ -134,17 +127,15 @@ class Discriminator(nn.Module):
         return output.view(-1, 1).squeeze(1)
 
 
-#ネットワークGに入力するランダムノイズの生成
+#ネットワークGに入力するランダムノイズ
 nz = 100
 fixed_noise = torch.randn(batchsize, nz, 1, 1, device=device)
 
 # ネットワークGの宣言
-netG = Generator(0, nz).to(device)
-# netG.apply(weights_init)
+netG = Generator(opt.ngpu, nz).to(device)
 
 # ネットワークDの宣言
-netD = Discriminator(0).to(device)
-# netD.apply(weights_init)
+netD = Discriminator(opt.ngpu).to(device)
 
 # 損失関数
 criterion = nn.BCELoss()
